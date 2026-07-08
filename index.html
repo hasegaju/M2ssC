@@ -259,6 +259,7 @@ button.ghost{flex:0 0 52px}
   </div>
   <div class="cam-bar">
     <span id="cam-msg">バーコードを枠内にかざしてください</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v4</span>
     <button type="button" id="btn-cam-close">閉じる</button>
   </div>
 </div>
@@ -374,9 +375,12 @@ function commit(raw){
 }
 
 /* ========== カメラ読取（ZXingローカル同梱・オフライン動作） ========== */
-let camActive = false, zxReader = null, lastScan = {code:"", t:0};
+let camActive = false, camStream = null, camTimer = null, lastScan = {code:"", t:0};
+let coreReader = null;
 const overlay = $("cam-overlay"), camVideo = $("cam-video"),
-      camFrame = $("cam-frame"), camMsg = $("cam-msg");
+      camFrame = $("cam-frame"), camMsg = $("cam-msg"), camVer = $("cam-ver");
+const camCanvas = document.createElement("canvas");
+const camCtx = camCanvas.getContext("2d", {willReadFrequently:true});
 
 function onDecoded(text){
   const now = Date.now();
@@ -388,8 +392,62 @@ function onDecoded(text){
   camFrame.classList.add("ok");
   setTimeout(()=>{
     camFrame.classList.remove("ok");
-    if(camActive) camMsg.textContent = "バーコードを枠内にかざしてください";
+    if(camActive) camMsg.textContent = "15〜20cm離してかざしてください";
   }, 800);
+}
+
+function makeReader(){
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.QR_CODE
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  const r = new ZXing.MultiFormatReader();
+  r.setHints(hints);
+  return r;
+}
+
+/* 読取枠に相当する中央帯だけを切り出して解析
+   → バーコードが解析画像の大部分を占め、1Dの読取率が大きく上がる
+   輝度変換はライブラリ任せにせず自前で行う(検証済みのRGBLuminanceSource経路) */
+let frameCount = 0, camErrShown = false;
+function decodeFrame(){
+  if(!camActive || camVideo.readyState < 2) return;
+  const vw = camVideo.videoWidth, vh = camVideo.videoHeight;
+  if(!vw || !vh) return;
+
+  try{
+    const sw = Math.round(vw * 0.86);   // 中央 86% 幅
+    const sh = Math.round(vh * 0.44);   // 中央 44% 高さ（ガイド枠相当）
+    const scale = Math.min(1, 1100 / sw); // 解析負荷を抑えるため横1100pxに制限
+    const cw = Math.round(sw * scale), ch = Math.round(sh * scale);
+    camCanvas.width = cw; camCanvas.height = ch;
+    camCtx.drawImage(camVideo, (vw-sw)/2, (vh-sh)/2, sw, sh, 0, 0, cw, ch);
+
+    const px = camCtx.getImageData(0, 0, cw, ch).data;
+    const lum = new Uint8ClampedArray(cw * ch);
+    for(let i = 0, n = cw * ch; i < n; i++){
+      lum[i] = (px[i*4]*77 + px[i*4+1]*151 + px[i*4+2]*28) >> 8;
+    }
+    const src = new ZXing.RGBLuminanceSource(lum, cw, ch);
+    const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src));
+    const res = coreReader.decodeWithState(bmp); // setHints済みの状態を保持する正規API
+    if(res) onDecoded(res.getText());
+  }catch(e){
+    if(e instanceof ZXing.NotFoundException ||
+       e instanceof ZXing.FormatException ||
+       e instanceof ZXing.ChecksumException){
+      /* このフレームでは未検出。正常 */
+    }else if(!camErrShown){
+      camErrShown = true; // 本物のエラーは隠さず表示する
+      camMsg.textContent = "解析エラー: " + (e && (e.message || e.constructor.name));
+    }
+  }
+
+  /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
+  if(++frameCount % 8 === 0) camVer.textContent = "v4·" + frameCount;
 }
 
 async function openCam(){
@@ -397,25 +455,28 @@ async function openCam(){
   camActive = true;
   camMsg.textContent = "カメラ起動中…";
   try{
-    if(!zxReader){
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-        ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
-        ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
-        ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.QR_CODE
-      ]);
-      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-      zxReader = new ZXing.BrowserMultiFormatReader(hints);
-      zxReader.timeBetweenDecodingAttempts = 150;
-    }
-    await zxReader.decodeFromConstraints(
-      { audio:false,
-        video:{ facingMode:{ideal:"environment"},
-                width:{ideal:1280}, height:{ideal:720} } },
-      camVideo,
-      (result)=>{ if(result && camActive) onDecoded(result.getText()); }
-    );
-    if(camActive) camMsg.textContent = "バーコードを枠内にかざしてください";
+    coreReader = coreReader || makeReader();
+    camStream = await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{ facingMode:{ideal:"environment"},
+              width:{ideal:1920}, height:{ideal:1080} }
+    });
+    camVideo.srcObject = camStream;
+    await camVideo.play();
+
+    /* 対応端末では2倍ズーム: 物理的に離れたままバーコードを大きく写せるので
+       最短撮影距離によるピンボケ問題がほぼ消える */
+    try{
+      const track = camStream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : null;
+      if(caps && caps.zoom){
+        const z = Math.min(2, caps.zoom.max || 2);
+        await track.applyConstraints({advanced:[{zoom:z}]});
+      }
+    }catch(e){ /* ズーム非対応でも読取は継続 */ }
+
+    camTimer = setInterval(decodeFrame, 130);
+    camMsg.textContent = "15〜20cm離してかざしてください";
   }catch(err){
     closeCam();
     alert(err && err.name === "NotAllowedError"
@@ -427,7 +488,12 @@ async function openCam(){
 function closeCam(){
   camActive = false;
   overlay.classList.remove("open");
-  if(zxReader){ try{ zxReader.reset(); }catch(e){} } // ストリーム停止
+  if(camTimer){ clearInterval(camTimer); camTimer = null; }
+  if(camStream){
+    camStream.getTracks().forEach(t=>t.stop());
+    camStream = null;
+  }
+  camVideo.srcObject = null;
   input.focus();
 }
 
