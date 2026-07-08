@@ -190,6 +190,45 @@ ul{list-style:none}
 .cam-bar span{flex:1;color:#fff;font-size:13px}
 .cam-bar button{flex:0 0 auto;padding:11px 22px;background:#2A2F38;color:#fff;border-color:#3A404A}
 
+/* ── 数量入力モーダル ── */
+.qty-toggle{
+  font-size:10px;font-weight:700;letter-spacing:.04em;
+  padding:2px 8px;border-radius:99px;margin-left:6px;
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  flex:none;
+}
+.qty-toggle.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+#qty-modal{
+  position:fixed;inset:0;z-index:60;display:none;
+  align-items:flex-end;justify-content:center;
+  background:rgba(15,20,28,.55);
+}
+#qty-modal.open{display:flex}
+.qm-card{
+  width:100%;max-width:430px;
+  background:var(--surface);
+  border-radius:18px 18px 0 0;
+  padding:18px 16px calc(14px + env(safe-area-inset-bottom));
+}
+.qm-code{
+  font-family:var(--mono);font-size:15px;font-weight:600;
+  word-break:break-all;text-align:center;
+}
+.qm-label{font-size:11px;color:var(--muted);text-align:center;margin-top:2px}
+.qm-num{
+  font-family:var(--mono);font-size:44px;font-weight:700;
+  text-align:center;padding:6px 0 12px;line-height:1.1;
+}
+.qm-num small{font-size:14px;font-weight:400;color:var(--muted)}
+.qm-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.qm-pad button{
+  font-family:var(--mono);font-size:22px;font-weight:600;
+  padding:13px 0;flex:none;
+}
+.qm-pad button.fn{font-family:var(--sans);font-size:14px;font-weight:600;color:var(--muted)}
+.qm-actions{display:flex;gap:8px;margin-top:10px}
+.qm-actions button{padding:14px 0;font-size:15px}
+
 /* ── footer actions ── */
 footer{
   position:fixed;left:0;right:0;bottom:0;
@@ -222,7 +261,7 @@ button.ghost{flex:0 0 52px}
 </header>
 
 <div class="scanbox" id="scanbox">
-  <label>スキャン入力 <span class="st" id="stat-msg">リーダー待機中…</span></label>
+  <label><span style="display:flex;align-items:center">スキャン入力<button type="button" class="qty-toggle on" id="btn-qty-mode">数量入力 ON</button></span> <span class="st" id="stat-msg">リーダー待機中…</span></label>
   <div class="scanline">
     <input id="scan" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
            spellcheck="false" placeholder="バーコードを読み取ってください" enterkeyhint="done">
@@ -249,6 +288,24 @@ button.ghost{flex:0 0 52px}
   <button id="btn-clear">クリア</button>
 </footer>
 
+<div id="qty-modal">
+  <div class="qm-card">
+    <div class="qm-code" id="qm-code">4901234567894</div>
+    <div class="qm-label">数量を入力してください</div>
+    <div class="qm-num"><span id="qm-num">1</span><small> 点</small></div>
+    <div class="qm-pad" id="qm-pad">
+      <button>1</button><button>2</button><button>3</button>
+      <button>4</button><button>5</button><button>6</button>
+      <button>7</button><button>8</button><button>9</button>
+      <button class="fn" data-k="C">クリア</button><button>0</button><button class="fn" data-k="B">⌫</button>
+    </div>
+    <div class="qm-actions">
+      <button type="button" id="qm-cancel">キャンセル</button>
+      <button type="button" class="primary" id="qm-ok">確定して次へ</button>
+    </div>
+  </div>
+</div>
+
 <div id="cam-overlay">
   <div class="cam-stage">
     <video id="cam-video" autoplay muted playsinline></video>
@@ -259,7 +316,7 @@ button.ghost{flex:0 0 52px}
   </div>
   <div class="cam-bar">
     <span id="cam-msg">バーコードを枠内にかざしてください</span>
-    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v4</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v5</span>
     <button type="button" id="btn-cam-close">閉じる</button>
   </div>
 </div>
@@ -342,27 +399,24 @@ function render(newIdx = -1, isDup = false){
 function esc(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 
 /* ========== 読取コミット ========== */
-function commit(raw){
-  const code = raw.trim();
-  if(!code) return;
+function addItem(code, qty){
   const time = nowStr();
   const idx = items.findIndex(it=>it.code===code);
   let isDup = false, newIdx = 0;
 
   if(idx >= 0){
     const it = items.splice(idx,1)[0];
-    it.qty++; it.time = time;
+    it.qty += qty; it.time = time;
     items.unshift(it);
     isDup = true;
   }else{
-    items.unshift({code, type:codeType(code), qty:1, time});
+    items.unshift({code, type:codeType(code), qty, time});
   }
   render(newIdx, isDup);
   $("s-last").textContent = time;
 
-  beep();
   box.classList.add("flash-ok");
-  $("stat-msg").textContent = isDup ? "読取OK（数量+1）" : "読取OK（新規登録）";
+  $("stat-msg").textContent = isDup ? `読取OK（数量+${qty}）` : "読取OK（新規登録）";
   $("stat-msg").classList.add("on");
   setTimeout(()=>{
     box.classList.remove("flash-ok");
@@ -371,8 +425,64 @@ function commit(raw){
   }, 900);
 
   input.value = "";
+  if(!camActive && !qtyOpen) input.focus();
+}
+
+function handleScan(raw){
+  const code = raw.trim();
+  if(!code) return;
+  beep();
+  if(qtyMode){ openQty(code); }
+  else{ addItem(code, 1); }
+}
+
+/* ========== 数量入力モーダル ========== */
+let qtyMode = true, qtyOpen = false, qtyCode = "", qtyVal = "";
+const qtyModal = $("qty-modal");
+
+function qtyRender(){ $("qm-num").textContent = qtyVal === "" ? "1" : qtyVal; }
+
+function openQty(code){
+  qtyOpen = true; qtyCode = code; qtyVal = "";
+  $("qm-code").textContent = code;
+  qtyRender();
+  qtyModal.classList.add("open");
+  input.value = "";
+}
+function closeQty(){
+  qtyOpen = false;
+  qtyModal.classList.remove("open");
+  /* 同一コードの即時再読取(再ポップアップ)を防ぐ */
+  lastScan = {code: qtyCode, t: Date.now()};
   if(!camActive) input.focus();
 }
+function qtyKey(k){
+  if(k >= "0" && k <= "9"){
+    if(qtyVal === "" && k === "0") return;      // 先頭ゼロは無視
+    if(qtyVal.length < 4) qtyVal += k;          // 最大9999
+  }
+  else if(k === "C") qtyVal = "";
+  else if(k === "B") qtyVal = qtyVal.slice(0, -1);
+  qtyRender();
+}
+function qtyConfirm(){
+  const q = Math.max(1, parseInt(qtyVal || "1", 10));
+  closeQty();
+  addItem(qtyCode, q);
+}
+
+$("qm-pad").addEventListener("click", e=>{
+  const b = e.target.closest("button");
+  if(b) qtyKey(b.dataset.k || b.textContent);
+});
+$("qm-ok").addEventListener("click", qtyConfirm);
+$("qm-cancel").addEventListener("click", closeQty);
+$("btn-qty-mode").addEventListener("click", function(){
+  qtyMode = !qtyMode;
+  this.classList.toggle("on", qtyMode);
+  this.textContent = "数量入力 " + (qtyMode ? "ON" : "OFF");
+  if(!camActive) input.focus();
+});
 
 /* ========== カメラ読取（ZXingローカル同梱・オフライン動作） ========== */
 let camActive = false, camStream = null, camTimer = null, lastScan = {code:"", t:0};
@@ -387,7 +497,7 @@ function onDecoded(text){
   if(text === lastScan.code && now - lastScan.t < 2500) return; // 同一コード連射防止
   if(now - lastScan.t < 600) return;                            // 読取間クールダウン
   lastScan = {code:text, t:now};
-  commit(text);
+  handleScan(text);
   camMsg.textContent = "読取OK: " + text;
   camFrame.classList.add("ok");
   setTimeout(()=>{
@@ -414,7 +524,7 @@ function makeReader(){
    輝度変換はライブラリ任せにせず自前で行う(検証済みのRGBLuminanceSource経路) */
 let frameCount = 0, camErrShown = false;
 function decodeFrame(){
-  if(!camActive || camVideo.readyState < 2) return;
+  if(!camActive || qtyOpen || camVideo.readyState < 2) return; // 数量入力中は解析一時停止
   const vw = camVideo.videoWidth, vh = camVideo.videoHeight;
   if(!vw || !vh) return;
 
@@ -447,7 +557,7 @@ function decodeFrame(){
   }
 
   /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
-  if(++frameCount % 8 === 0) camVer.textContent = "v4·" + frameCount;
+  if(++frameCount % 8 === 0) camVer.textContent = "v5·" + frameCount;
 }
 
 async function openCam(){
@@ -502,13 +612,21 @@ $("btn-cam-close").addEventListener("click", closeCam);
 
 /* ========== 入力イベント（HIDリーダー＝キーボード入力＋Enter） ========== */
 input.addEventListener("keydown", e=>{
-  if(e.key === "Enter"){ e.preventDefault(); commit(input.value); }
+  if(e.key === "Enter"){ e.preventDefault(); handleScan(input.value); }
 });
 input.addEventListener("focus", ()=> box.classList.add("armed"));
 input.addEventListener("blur",  ()=> box.classList.remove("armed"));
 
-/* フォーカスが外れていてもリーダー入力を拾って戻す保険 */
+/* フォーカスが外れていてもリーダー入力を拾って戻す保険
+   数量入力中はハードキー(外付けテンキー等)を数量にルーティング */
 document.addEventListener("keydown", e=>{
+  if(qtyOpen){
+    if(e.key >= "0" && e.key <= "9"){ qtyKey(e.key); e.preventDefault(); }
+    else if(e.key === "Backspace"){ qtyKey("B"); e.preventDefault(); }
+    else if(e.key === "Enter"){ qtyConfirm(); e.preventDefault(); }
+    else if(e.key === "Escape"){ closeQty(); e.preventDefault(); }
+    return;
+  }
   if(document.activeElement !== input && e.key.length === 1){ input.focus(); }
 });
 box.addEventListener("click", ()=> input.focus());
