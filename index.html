@@ -263,8 +263,9 @@ button.ghost{flex:0 0 52px}
 <div class="scanbox" id="scanbox">
   <label><span style="display:flex;align-items:center">スキャン入力<button type="button" class="qty-toggle on" id="btn-qty-mode">数量入力 ON</button></span> <span class="st" id="stat-msg">リーダー待機中…</span></label>
   <div class="scanline">
-    <input id="scan" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
+    <input id="scan" type="text" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off"
            spellcheck="false" placeholder="バーコードを読み取ってください" enterkeyhint="done">
+    <button type="button" class="cam-btn" id="btn-kbd" aria-label="手入力キーボードの切替">⌨️</button>
     <button type="button" class="cam-btn" id="btn-cam" aria-label="カメラで読み取る">📷</button>
   </div>
   <div class="laser"></div>
@@ -316,7 +317,7 @@ button.ghost{flex:0 0 52px}
   </div>
   <div class="cam-bar">
     <span id="cam-msg">バーコードを枠内にかざしてください</span>
-    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v5</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v6</span>
     <button type="button" id="btn-cam-close">閉じる</button>
   </div>
 </div>
@@ -557,7 +558,7 @@ function decodeFrame(){
   }
 
   /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
-  if(++frameCount % 8 === 0) camVer.textContent = "v5·" + frameCount;
+  if(++frameCount % 8 === 0) camVer.textContent = "v6·" + frameCount;
 }
 
 async function openCam(){
@@ -609,6 +610,18 @@ function closeCam(){
 
 $("btn-cam").addEventListener("click", openCam);
 $("btn-cam-close").addEventListener("click", closeCam);
+
+/* ========== 手入力キーボードの切替 ==========
+   通常は inputmode="none" でソフトキーボードを抑止(HIDリーダー入力は通る)。
+   ⌨️で手打ちしたい時だけキーボードを呼び出せる */
+let kbdOn = false;
+$("btn-kbd").addEventListener("click", function(){
+  kbdOn = !kbdOn;
+  input.setAttribute("inputmode", kbdOn ? "text" : "none");
+  this.style.background = kbdOn ? "var(--ink)" : "";
+  input.blur();           // inputmode変更を反映させるため一度外して
+  input.focus();          // 掛け直す(ONならここでキーボードが出る)
+});
 
 /* ========== 入力イベント（HIDリーダー＝キーボード入力＋Enter） ========== */
 input.addEventListener("keydown", e=>{

@@ -1,6 +1,6 @@
 /* SCAN LOG demo — offline cache
    バージョンを上げると次回オンライン時にキャッシュが更新される */
-const VERSION = "scanlog-v5";
+const VERSION = "scanlog-v6";
 const ASSETS = [
   "./",
   "./index.html",
