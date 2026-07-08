@@ -199,7 +199,7 @@ ul{list-style:none}
 }
 .qty-toggle.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 #qty-modal{
-  position:fixed;inset:0;z-index:60;display:none;
+  position:fixed;inset:0;z-index:999;display:none;
   align-items:flex-end;justify-content:center;
   background:rgba(15,20,28,.55);
 }
@@ -317,7 +317,7 @@ button.ghost{flex:0 0 52px}
   </div>
   <div class="cam-bar">
     <span id="cam-msg">バーコードを枠内にかざしてください</span>
-    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v6</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">v7</span>
     <button type="button" id="btn-cam-close">閉じる</button>
   </div>
 </div>
@@ -448,11 +448,14 @@ function openQty(code){
   $("qm-code").textContent = code;
   qtyRender();
   qtyModal.classList.add("open");
+  qtyModal.style.display = "flex"; // クラス切替に加えて直接指定(表示の確実性を優先)
   input.value = "";
+  input.blur();
 }
 function closeQty(){
   qtyOpen = false;
   qtyModal.classList.remove("open");
+  qtyModal.style.display = "";
   /* 同一コードの即時再読取(再ポップアップ)を防ぐ */
   lastScan = {code: qtyCode, t: Date.now()};
   if(!camActive) input.focus();
@@ -558,7 +561,7 @@ function decodeFrame(){
   }
 
   /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
-  if(++frameCount % 8 === 0) camVer.textContent = "v6·" + frameCount;
+  if(++frameCount % 8 === 0) camVer.textContent = "v7·" + frameCount;
 }
 
 async function openCam(){
@@ -617,15 +620,41 @@ $("btn-cam-close").addEventListener("click", closeCam);
 let kbdOn = false;
 $("btn-kbd").addEventListener("click", function(){
   kbdOn = !kbdOn;
-  input.setAttribute("inputmode", kbdOn ? "text" : "none");
-  this.style.background = kbdOn ? "var(--ink)" : "";
-  input.blur();           // inputmode変更を反映させるため一度外して
-  input.focus();          // 掛け直す(ONならここでキーボードが出る)
+  this.style.background = kbdOn ? "#D8DDE3" : "";
+  if(kbdOn){
+    /* iOSはユーザー操作と同一処理内のfocusでしかキーボードを出さないため、
+       一時inputに先にフォーカスして「キーボード表示権」を確保してから本命へ移す */
+    const tmp = document.createElement("input");
+    tmp.type = "text";
+    tmp.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0";
+    document.body.appendChild(tmp);
+    tmp.focus();
+    setTimeout(()=>{
+      input.setAttribute("inputmode", "text");
+      input.focus();
+      tmp.remove();
+    }, 80);
+  }else{
+    input.setAttribute("inputmode", "none");
+    input.blur();
+    setTimeout(()=> input.focus(), 80); // キーボードを畳んでからスキャン待機フォーカスに戻す
+  }
 });
 
 /* ========== 入力イベント（HIDリーダー＝キーボード入力＋Enter） ========== */
 input.addEventListener("keydown", e=>{
-  if(e.key === "Enter"){ e.preventDefault(); handleScan(input.value); }
+  if(qtyOpen){ // モーダル表示中の入力は数量側へルーティング(スキャンのEnterで即confirmされる事故を防ぐ)
+    e.preventDefault(); e.stopPropagation();
+    if(e.key === "Enter") qtyConfirm();
+    else if(e.key >= "0" && e.key <= "9") qtyKey(e.key);
+    else if(e.key === "Backspace") qtyKey("B");
+    return;
+  }
+  if(e.key === "Enter"){
+    e.preventDefault();
+    e.stopPropagation(); // documentのEnterハンドラ(数量確定)に同じイベントが届くのを止める
+    handleScan(input.value);
+  }
 });
 input.addEventListener("focus", ()=> box.classList.add("armed"));
 input.addEventListener("blur",  ()=> box.classList.remove("armed"));
